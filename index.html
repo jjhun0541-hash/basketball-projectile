@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ballistics Hoops — 과학 FPS 프로토타입</title>
+<style>
+  :root { color-scheme: dark; --panel: rgba(10,18,30,.82); --line: rgba(180,220,255,.22); --cyan:#75e6ff; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#07111e; font-family:system-ui,-apple-system,Segoe UI,sans-serif; }
+  canvas { display:block; }
+  #hud { position:fixed; inset:0; pointer-events:none; color:#f2f8ff; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; backdrop-filter: blur(10px); box-shadow:0 8px 28px #0003; }
+  #brand { position:absolute; left:16px; top:14px; padding:12px 15px; }
+  #brand b { display:block; letter-spacing:.12em; font-size:13px; color:var(--cyan); }
+  #brand span { font-size:12px; opacity:.75; }
+  #stats { position:absolute; right:16px; top:14px; padding:12px 15px; min-width:168px; text-align:right; }
+  #stats strong { font-size:20px; }
+  #stats small { display:block; opacity:.7; }
+  #crosshair { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:18px; height:18px; }
+  #crosshair:before,#crosshair:after { content:""; position:absolute; background:#fff; box-shadow:0 0 5px #000; }
+  #crosshair:before { width:2px;height:18px;left:8px;top:0; }
+  #crosshair:after { height:2px;width:18px;left:0;top:8px; }
+  #bottom { position:absolute; left:16px; bottom:16px; width:min(440px,calc(100vw - 24px)); padding:13px 16px; pointer-events:auto; }
+  .controls { display:grid; grid-template-columns:1fr 1fr; gap:10px 18px; font-size:12px; opacity:.8; margin-top:10px; }
+  .row { display:flex; align-items:center; gap:10px; margin:8px 0; }
+  .row label { width:86px; font-size:13px; }
+  .row input { flex:1; accent-color:var(--cyan); min-width:0; }
+  .value { width:76px; text-align:right; font-variant-numeric:tabular-nums; color:var(--cyan); font-size:13px; }
+  #message { font-weight:650; font-size:15px; }
+  #submessage { font-size:12px; opacity:.7; margin-top:3px; }
+  #startScreen { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#06101ddd,#102a43bb); color:white; z-index:5; }
+  #startCard { width:min(480px,calc(100vw - 28px)); padding:28px; }
+  #startCard h1 { margin:0 0 6px; font-size:clamp(25px,5vw,38px); letter-spacing:-.04em; }
+  #startCard p { line-height:1.55; color:#c8d8e8; font-size:14px; }
+  button { border:0; border-radius:10px; padding:12px 16px; color:#07111e; background:var(--cyan); font-weight:750; cursor:pointer; }
+  button.secondary { color:#e8f6ff; background:#ffffff18; border:1px solid var(--line); }
+  .buttons { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  #toast { position:absolute; left:50%; top:22%; transform:translateX(-50%); font-size:clamp(22px,4vw,36px); font-weight:850; text-shadow:0 3px 12px #000; opacity:0; transition:opacity .2s; text-align:center; white-space:nowrap; }
+  #toast.show { opacity:1; }
+  #mobileHelp { display:none; }
+  #resultPanel { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:min(360px,calc(100vw - 28px)); padding:22px; text-align:center; pointer-events:auto; display:none; }
+  #resultPanel.show { display:block; }
+  #resultPanel h2 { margin:0 0 8px; font-size:26px; }
+  #resultPanel p { margin:5px 0; color:#c8d8e8; font-size:14px; }
+  #distanceResult { color:var(--cyan); font-size:25px !important; font-weight:800; }
+  #stageBadge { position:absolute; left:16px; top:88px; padding:8px 12px; font-size:12px; color:var(--cyan); }
+  #stageBadge b { display:block; color:#fff; margin-bottom:2px; }
+  @media(max-width:600px) {
+    #brand {left:8px;top:8px;padding:8px 10px} #stats {right:8px;top:8px;padding:8px 10px;min-width:120px}
+    #bottom {left:8px;bottom:8px;padding:10px 12px} .controls {grid-template-columns:1fr 1fr;gap:6px}
+    .row label {width:65px;font-size:12px} .value {width:62px;font-size:12px}
+    #mobileHelp {display:block;font-size:11px;opacity:.65;margin-top:8px}
+  }
+</style>
+</head>
+<body>
+<div id="startScreen">
+  <div id="startCard" class="panel">
+    <h1>게임 <span style="color:#75e6ff">설명서</span></h1>
+    <div style="color:#75e6ff;font-size:12px;letter-spacing:.16em;font-weight:800">조작키 안내</div>
+    <p><b>W A S D</b> 이동 · <b>마우스</b> 시점 회전 · <b>우클릭 드래그</b> 시점 회전</p>
+    <p><b>Space</b> 발사 · <b>R</b> 재시도 · <b>Alt</b> 마우스 고정 전환</p>
+    <p>슬라이더로 발사 각도와 초기 속력을 조절하고, <b>2D 시점</b>에서 예상 궤적을 확인하세요.</p>
+    <div class="buttons">
+      <button id="startBtn">코트 입장하기</button>
+      <button id="skipLock" class="secondary">마우스 고정 없이 시작</button>
+    </div>
+    <p style="font-size:11px;opacity:.65;margin-bottom:0">최상의 조작 경험은 PC에서 권장합니다. 마우스 고정은 시작 버튼을 눌렀을 때 브라우저가 지원하면 활성화됩니다.</p>
+  </div>
+</div>
+<div id="hud">
+  <div id="brand" class="panel"><b>농구공 실험장</b><span>3D 물리 · 포물선 실험</span></div>
+  <div id="stats" class="panel"><small>득점 / 시도</small><strong id="score">0 / 0</strong><small id="flight">공 대기 중</small></div>
+  <div id="stageBadge" class="panel"><b id="stageName">STAGE 1 · 기본 코트</b><span id="stageRule">바람 없음</span></div>
+  <div id="crosshair"></div>
+  <div id="toast"></div>
+  <div id="bottom" class="panel">
+    <div id="message">발사 조건을 설정하세요</div>
+    <div id="submessage">골대 중앙을 조준하고 각도와 속도를 조절해 보세요.</div>
+    <div class="row"><label for="angle">발사 각도</label><input id="angle" type="range" min="0" max="75" step="1" value="40"><span class="value" id="angleVal">48°</span></div>
+    <div class="row"><label for="speed">초기 속력</label><input id="speed" type="range" min="5" max="16" step=".5" value="10"><span class="value" id="speedVal">10.0 m/s</span></div>
+    <div class="buttons" style="margin-top:8px;pointer-events:auto">
+      <button id="shootBtn">공 발사 (Space)</button>
+      <button id="resetBtn" class="secondary">다시 시도 (R)</button>
+      <button id="trajectoryBtn" class="secondary">궤적 표시: 켬</button>
+      <button id="viewBtn" class="secondary">2D 시점</button>
+    </div>
+    <div class="controls"><span>W A S D · 이동</span><span>마우스 · 시점 회전</span><span>Space · 발사</span><span>Alt · 마우스 고정 전환</span></div>
+    <div id="mobileHelp">모바일은 슬라이더와 버튼을 사용할 수 있지만, 이동/시점 조작은 PC를 권장합니다.</div>
+  </div>
+  <div id="resultPanel" class="panel">
+    <h2 id="resultTitle">발사 결과</h2>
+    <p id="distanceResult">골대까지 최근접 거리 0.00 m</p>
+    <p id="resultDetail">같은 위치에서 조건을 조절해 다시 시험할 수 있습니다.</p>
+    <div class="buttons" style="justify-content:center"><button id="resultRetry">같은 위치에서 다시 시도</button><button id="nextStageBtn" style="display:none">다음 스테이지 진입</button></div>
+  </div>
+</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9bc9e9);
+scene.fog = new THREE.Fog(0x9bc9e9, 22, 70);
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 150);
+camera.position.set(0, 1.65, 9);
+const orthoCamera = new THREE.OrthographicCamera(-10,10,7,-7,0.1,150);
+let activeCamera=camera;
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xe7f6ff, 0x4b583d, 2.1));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(-7, 14, 8); sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+scene.add(sun);
+
+const mat = (color, roughness=.75, metalness=0) => new THREE.MeshStandardMaterial({color,roughness,metalness});
+const courtMat=mat(0xc98c54), lineMat=mat(0xfff1d0), wallMat=mat(0x49677a), metalMat=mat(0x687985,.35,.65), orangeMat=mat(0xf47724,.55), whiteMat=mat(0xf4f7f8), glassMat=new THREE.MeshStandardMaterial({color:0xa9e8ff,transparent:true,opacity:.35,roughness:.2}), darkMat=mat(0x24313a);
+const sideViewHide=[];
+const hideIn2D = object => { sideViewHide.push(object); return object; };
+function box(w,h,d,material,x,y,z, cast=true, receive=true) {
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);
+  m.position.set(x,y,z); m.castShadow=cast; m.receiveShadow=receive; scene.add(m); return m;
+}
+box(32,.3,42,courtMat,0,-.18,-7);
+box(32,5,.5,wallMat,0,2.4,-28,false);
+// The side walls are hidden only for the orthographic side-view, otherwise
+// the nearest wall would completely cover the hoop and trajectory.
+const sideWalls=[
+  box(.5,5,42,wallMat,-16,2.4,-7,false),
+  box(.5,5,42,wallMat,16,2.4,-7,false)
+];
+box(32,5,.5,wallMat,0,2.4,14,false);
+const grid = new THREE.GridHelper(32,32,0xf8e5c5,0xe9cba8); grid.position.set(0,-.015,-7); scene.add(grid); hideIn2D(grid);
+// Court markings
+const courtLines=[];
+function line(x1,z1,x2,z2,y=.0,color=0xfff0cf) {
+  const pts=[new THREE.Vector3(x1,y,z1),new THREE.Vector3(x2,y,z2)];
+  const g=new THREE.BufferGeometry().setFromPoints(pts);
+  const courtLine=new THREE.Line(g,new THREE.LineBasicMaterial({color}));
+  courtLines.push(courtLine); scene.add(courtLine);
+}
+line(-7,5,7,5); line(-7,-18,7,-18); line(-7,5,-7,-18); line(7,5,7,-18);
+const centerCircle = new THREE.Mesh(new THREE.TorusGeometry(2.2,.035,8,64),lineMat);
+centerCircle.rotation.x=Math.PI/2; centerCircle.position.set(0,.015,-7); scene.add(centerCircle); hideIn2D(centerCircle);
+
+// Hoop facing player (toward +Z); backboard behind rim at negative Z.
+// Generous rim: its visual size and the scoring gate both account for the ball.
+const hoopZ=-9.5, rimY=3.05, rimR=.72;
+hideIn2D(box(.12,3.1,.12,metalMat,0,1.55,-11.1));
+hideIn2D(box(2.1,.12,.12,metalMat,0,3.2,-10.8));
+hideIn2D(box(1.8,1.05,.12,glassMat,0,3.75,-10.55));
+hideIn2D(box(1.8,.06,.08,whiteMat,0,3.22,-10.48,false));
+hideIn2D(box(.06,.42,.08,whiteMat,0,3.43,-10.48,false));
+const rim = new THREE.Mesh(new THREE.TorusGeometry(rimR,.055,12,48),orangeMat);
+rim.rotation.x=Math.PI/2; rim.position.set(0,rimY,hoopZ); rim.castShadow=true; scene.add(rim); hideIn2D(rim);
+// Rim supports and simple net strands
+hideIn2D(box(.6,.08,.08,metalMat,0,3.12,-10.1));
+const netMat=new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:.8});
+for(let i=0;i<12;i++){
+  const a=i/12*Math.PI*2, b=(i+1)/12*Math.PI*2;
+  const p1=new THREE.Vector3(Math.cos(a)*.4,3.0,hoopZ+Math.sin(a)*.4);
+  const p2=new THREE.Vector3(Math.cos(a)*.24,2.35,hoopZ+Math.sin(a)*.24);
+  const p3=new THREE.Vector3(Math.cos(b)*.4,3.0,hoopZ+Math.sin(b)*.4);
+  const g=new THREE.BufferGeometry().setFromPoints([p1,p2,p3]);
+  const netLine=new THREE.Line(g,netMat); scene.add(netLine); hideIn2D(netLine);
+}
+// Decorative lamps
+for (const x of [-11,11]) {
+  hideIn2D(box(.18,4,.18,metalMat,x,2,-18));
+  const lamp=new THREE.PointLight(0xd4f3ff,12,15); lamp.position.set(x,4.3,-18); scene.add(lamp); hideIn2D(lamp);
+  hideIn2D(box(1,.12,.5,whiteMat,x,4.2,-18));
+}
+
+// A clean diagram of the basket for the orthographic side view.  This avoids
+// perspective-only supports and court props from overlapping the trajectory.
+const sideHoop = new THREE.Group(); sideHoop.visible=false; scene.add(sideHoop);
+function sideLine(points,color=0xffffff) {
+  const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(points),new THREE.LineBasicMaterial({color}));
+  sideHoop.add(line);
+}
+// Court baseline and a simplified regulation-style side silhouette.
+sideLine([new THREE.Vector3(0,.03,-25),new THREE.Vector3(0,.03,7)],0xfff0cf);
+sideLine([new THREE.Vector3(0,3.05,-10.55),new THREE.Vector3(0,4.35,-10.55)],0xeaf7ff);
+sideLine([new THREE.Vector3(0,4.35,-10.55),new THREE.Vector3(0,4.35,-9.65)],0xeaf7ff);
+sideLine([new THREE.Vector3(0,rimY,hoopZ-rimR),new THREE.Vector3(0,rimY,hoopZ+rimR)],0xf47724);
+sideLine([new THREE.Vector3(0,rimY,hoopZ-rimR*.72),new THREE.Vector3(0,2.25,hoopZ)],0xffffff);
+sideLine([new THREE.Vector3(0,rimY,hoopZ+rimR*.72),new THREE.Vector3(0,2.25,hoopZ)],0xffffff);
+
+// Player camera is the basketball. A small visible ball shell sits just below camera to make the premise legible.
+const ballGeo = new THREE.SphereGeometry(.32,32,24);
+const ballMat = new THREE.MeshStandardMaterial({color:0xe96b1b,roughness:.62});
+const ball = new THREE.Mesh(ballGeo,ballMat); ball.castShadow=true; scene.add(ball);
+const seamMat = new THREE.MeshBasicMaterial({color:0x332019});
+const seam1 = new THREE.Mesh(new THREE.TorusGeometry(.322,.009,6,48),seamMat); seam1.rotation.y=Math.PI/2; ball.add(seam1);
+const seam2 = new THREE.Mesh(new THREE.TorusGeometry(.322,.009,6,48),seamMat); seam2.rotation.x=Math.PI/2; ball.add(seam2);
+const seam3 = new THREE.Mesh(new THREE.TorusGeometry(.322,.009,6,48),seamMat); seam3.rotation.set(.7,.7,0); ball.add(seam3);
+ball.visible=false;
+
+// The launch marker is deliberately separate from the moving ball.  It stays
+// above the ball while aiming, and communicates both direction and power.
+const aimArrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), new THREE.Vector3(), 1, 0x75e6ff, .25, .14);
+aimArrow.visible=false; scene.add(aimArrow);
+
+const trajectoryLine = new THREE.Line(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0x35e0ff,transparent:true,opacity:.85}));
+trajectoryLine.frustumCulled=false; scene.add(trajectoryLine);
+const targetRing = new THREE.Mesh(new THREE.TorusGeometry(rimR,.018,8,48),new THREE.MeshBasicMaterial({color:0x75e6ff}));
+targetRing.rotation.x=Math.PI/2; targetRing.position.set(0,rimY,hoopZ); scene.add(targetRing);
+hideIn2D(targetRing);
+
+const ui = {
+ angle:document.querySelector('#angle'), speed:document.querySelector('#speed'),
+ angleVal:document.querySelector('#angleVal'), speedVal:document.querySelector('#speedVal'),
+ score:document.querySelector('#score'), flight:document.querySelector('#flight'),
+ message:document.querySelector('#message'), sub:document.querySelector('#submessage'),
+ toast:document.querySelector('#toast'), shoot:document.querySelector('#shootBtn'),
+ start:document.querySelector('#startScreen'), startBtn:document.querySelector('#startBtn'),
+ skipLock:document.querySelector('#skipLock'), reset:document.querySelector('#resetBtn'),
+  traj:document.querySelector('#trajectoryBtn'), view:document.querySelector('#viewBtn'),
+  result:document.querySelector('#resultPanel'), resultTitle:document.querySelector('#resultTitle'),
+  resultDistance:document.querySelector('#distanceResult'), resultDetail:document.querySelector('#resultDetail'),
+  resultRetry:document.querySelector('#resultRetry'), nextStage:document.querySelector('#nextStageBtn'),
+  stageName:document.querySelector('#stageName'), stageRule:document.querySelector('#stageRule')
+};
+let yaw=0, pitch=-.02, started=false, locked=false, showTrajectory=true, viewMode='3d';
+const keys={};
+let shots=0, scores=0, projectile=null, lastShotTime=0, toastTimer=0;
+const player={x:0,y:1.65,z:-1.5};
+let lastShotOrigin=null, resultView=null;
+const moveSpeed=5.2;
+const stages=[
+  {name:'STAGE 1 · 기본 코트', rule:'바람 없음 · 표준 중력', wind:new THREE.Vector3(), gravity:9.81},
+  {name:'STAGE 2 · 역풍 코트', rule:'골대 반대 방향의 강한 바람', wind:new THREE.Vector3(0,0,2.6), gravity:9.81},
+  {name:'STAGE 3 · 달빛 장거리', rule:'낮은 중력 · 길게 뻗는 궤적', wind:new THREE.Vector3(), gravity:4.2}
+];
+let stageIndex=0;
+const stage=()=>stages[stageIndex];
+function applyStage(index) {
+  stageIndex=THREE.MathUtils.clamp(index,0,stages.length-1);
+  ui.stageName.textContent=stage().name;
+  ui.stageRule.textContent=stage().rule;
+  shots=0; scores=0; updateScore(); lastShotOrigin=null;
+  resetPlayer();
+  showToast(`${stage().name} 시작`);
+}
+function refreshAimUI(){
+  ui.angleVal.textContent=`${ui.angle.value}°`;
+  ui.speedVal.textContent=`${Number(ui.speed.value).toFixed(1)} m/s`;
+  drawTrajectory();
+  updateAimArrow();
+}
+function updateAimUI(){
+  // The elevation slider also sets the camera's vertical aim, so the predicted
+  // trajectory begins in the direction shown by the crosshair.
+  pitch=THREE.MathUtils.degToRad(Number(ui.angle.value));
+  refreshAimUI();
+}
+ui.angle.addEventListener('input',updateAimUI);
+ui.speed.addEventListener('input',refreshAimUI);
+// Pointer lock can swallow normal cursor interaction in some browsers. Release it when
+// the player starts interacting with the settings panel; Alt can lock it again.
+document.querySelector('#bottom').addEventListener('pointerdown', e => {
+  if (e.target.closest('input,button')) unlockMouseNow();
+});
+function directionFromAim() {
+  const a=THREE.MathUtils.degToRad(Number(ui.angle.value));
+  // Match the camera's forward vector: horizontal yaw and vertical launch angle
+  // are shared by the crosshair, preview trajectory, and launched ball.
+  return new THREE.Vector3(-Math.sin(yaw)*Math.cos(a),Math.sin(a),-Math.cos(yaw)*Math.cos(a)).normalize();
+}
+function trajectoryPoints(origin, velocity, count=70, dt=.08) {
+  const pts=[];
+  for(let i=0;i<count;i++){
+    const t=i*dt;
+    pts.push(new THREE.Vector3(
+      origin.x+velocity.x*t+.5*stage().wind.x*t*t,
+      origin.y+velocity.y*t-.5*stage().gravity*t*t,
+      origin.z+velocity.z*t+.5*stage().wind.z*t*t
+    ));
+    if(pts[pts.length-1].y<.2 || pts[pts.length-1].z < -26) break;
+  }
+  return pts;
+}
+function drawTrajectory() {
+  if(!trajectoryLine) return;
+  const origin=new THREE.Vector3(player.x,player.y,player.z);
+  const v=directionFromAim().multiplyScalar(Number(ui.speed.value));
+  const pts=trajectoryPoints(origin,v);
+  trajectoryLine.geometry.dispose();
+  trajectoryLine.geometry=new THREE.BufferGeometry().setFromPoints(pts);
+  trajectoryLine.visible=(showTrajectory || viewMode==='2d') && !projectile;
+}
+function updateAimArrow() {
+  if (!started || projectile) { aimArrow.visible=false; return; }
+  const speed=Number(ui.speed.value), angle=THREE.MathUtils.degToRad(Number(ui.angle.value));
+  // Higher angle and speed create a taller, warmer arrow so the change is
+  // readable before launching without adding another HUD readout.
+  const length=.75+(speed-5)*.12+Math.sin(angle)*.7;
+  const color=new THREE.Color(0x75e6ff).lerp(new THREE.Color(0xff3b30),(speed-5)/11);
+  aimArrow.setDirection(directionFromAim());
+  aimArrow.setLength(length,Math.min(.34,length*.28),Math.min(.20,length*.16));
+  aimArrow.setColor(color);
+  aimArrow.position.copy(ball.position).add(new THREE.Vector3(0,.36,0));
+  aimArrow.visible=true;
+}
+function setViewMode(mode) {
+  viewMode=mode;
+  const is2d=mode==='2d';
+  sideWalls.forEach(wall=>wall.visible=!is2d);
+  sideViewHide.forEach(object=>object.visible=!is2d);
+  courtLines.forEach(courtLine=>courtLine.visible=!is2d);
+  sideHoop.visible=is2d;
+  // A side view only represents the vertical launch plane.  Reset horizontal
+  // aim here so a prior 3D yaw cannot make the 2D parabola appear to drift.
+  if(is2d) yaw=0;
+  ui.view.textContent=is2d?'3D 시점':'2D 시점';
+  ui.view.classList.toggle('secondary',true);
+  ui.sub.textContent=is2d?'2D에서는 예상 포물선을 확인하고 발사 각도·속력을 조절할 수 있습니다. 이동은 3D 시점에서만 가능합니다.':'골대 중앙을 조준하고 각도와 속도를 조절해 보세요.';
+  if(is2d) unlockMouseNow();
+  drawTrajectory(); updateAimArrow();
+}
+function showToast(text) {
+  ui.toast.textContent=text; ui.toast.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>ui.toast.classList.remove('show'),1600);
+}
+function setMessage(main,sub){ui.message.textContent=main;ui.sub.textContent=sub;}
+function updateScore(){ui.score.textContent=`${scores} / ${shots}`;}
+function resetPlayer(useLastShotPosition=false) {
+  if(projectile){scene.remove(projectile.mesh);projectile=null;}
+  const origin=useLastShotPosition && lastShotOrigin ? lastShotOrigin : new THREE.Vector3(0,1.65,-1.5);
+  resultView=null;
+  player.x=origin.x;player.y=origin.y;player.z=origin.z;
+  yaw=0; pitch=THREE.MathUtils.degToRad(Number(ui.angle.value));
+  camera.position.set(player.x,player.y,player.z);
+  camera.rotation.order='YXZ';camera.rotation.set(pitch,yaw,0);
+  ball.visible=true; trajectoryLine.visible=showTrajectory || viewMode==='2d';
+  ui.result.classList.remove('show');
+  ui.flight.textContent='공 대기 중';
+  setMessage('발사 조건을 설정하세요','골대 중앙을 조준하고 각도와 속도를 조절해 보세요.');
+  drawTrajectory();
+}
+function shoot() {
+  if(!started || projectile) return;
+  if(viewMode==='2d') setViewMode('3d');
+  const origin=new THREE.Vector3(player.x,player.y,player.z);
+  const dir=directionFromAim();
+  const velocity=dir.multiplyScalar(Number(ui.speed.value));
+  const mesh=new THREE.Mesh(new THREE.SphereGeometry(.24,24,18),ballMat);
+  mesh.castShadow=true; scene.add(mesh); mesh.position.copy(origin);
+  lastShotOrigin=origin.clone();
+  projectile={mesh,position:origin.clone(),velocity,age:0,scored:false,lastY:origin.y,prev:origin.clone(),minHoopDistance:origin.distanceTo(new THREE.Vector3(0,rimY,hoopZ))};
+  shots++; updateScore(); lastShotTime=performance.now();
+  trajectoryLine.visible=false;
+  ball.visible=false;
+  ui.flight.textContent='비행 중…';
+  setMessage('공의 궤적을 관찰하세요','발사 후 중력에 의해 수직 속도가 계속 변합니다.');
+}
+function finishShot(scored) {
+  if(!projectile) return;
+  // A made basket is counted at the rim-crossing event, so don't count it again here.
+  if(scored){showToast('골! · NICE SHOT');setMessage('득점 성공!','각도와 속도를 바꿔 같은 결과가 나오는지 실험해 보세요.');}
+  else {showToast('아쉽다! 다시 도전');setMessage('이번 시도는 실패','각도 또는 속도를 조금씩 바꾸고 궤적을 비교해 보세요.');}
+  updateScore(); ui.flight.textContent=scored?'골 성공':'시도 종료';
+  const distance=projectile.minHoopDistance;
+  resultView={position:projectile.position.clone(), direction:projectile.velocity.clone().normalize()};
+  scene.remove(projectile.mesh); projectile=null;
+  aimArrow.visible=false;
+  ui.resultTitle.textContent=scored?'득점 성공!':'발사 결과';
+  ui.resultDistance.textContent=`골대까지 최근접 거리 ${distance.toFixed(2)} m`;
+  ui.resultDetail.textContent=scored?'훌륭합니다. 같은 발사 지점에서 다른 조건도 비교해 보세요.':'각도 또는 속도를 조금씩 바꾸고 궤적을 비교해 보세요.';
+  ui.nextStage.style.display=scored && stageIndex<stages.length-1 ? '' : 'none';
+  ui.result.classList.add('show');
+}
+function updateProjectile(dt) {
+  if(!projectile) return;
+  const p=projectile;
+  p.age+=dt;
+  p.prev.copy(p.position);
+  p.velocity.addScaledVector(stage().wind,dt);
+  p.velocity.y-=stage().gravity*dt;
+  p.position.addScaledVector(p.velocity,dt);
+  p.mesh.position.copy(p.position);
+  p.minHoopDistance=Math.min(p.minHoopDistance,p.position.distanceTo(new THREE.Vector3(0,rimY,hoopZ)));
+  // Approximate scoring: ball crosses the rim height while descending and its center passes inside the hoop.
+  if(!p.scored && p.prev.y>rimY && p.position.y<=rimY && p.velocity.y<0) {
+    const t=(p.prev.y-rimY)/(p.prev.y-p.position.y);
+    const x=THREE.MathUtils.lerp(p.prev.x,p.position.x,t);
+    const z=THREE.MathUtils.lerp(p.prev.z,p.position.z,t);
+    const radial=Math.hypot(x, z-hoopZ);
+    // The rim is enlarged for an approachable experiment mode.  The gate is
+    // deliberately wider than the ball centre radius so visually clean makes
+    // are not rejected by one fixed-timestep sample.
+    if(radial < rimR-.12 && Math.abs(z-hoopZ)<rimR+.12) {
+      p.scored=true;
+      // Count once immediately; continue ball briefly through hoop.
+      scores++; updateScore(); showToast('골! · NICE SHOT');
+      setMessage('득점 성공!','발사 조건을 기록하고 다른 조건과 비교해 보세요.');
+      ui.flight.textContent='골 성공';
+    }
+  }
+  // Backboard/stand/ground simple collisions.
+  if(Math.abs(p.position.x)>15.4 || p.position.z>13.5 || p.position.z<-27.2) { finishShot(p.scored); return; }
+  // Backboard plane collision
+  if(p.prev.z> -10.5 && p.position.z<=-10.5 && p.position.y>3.15 && p.position.y<4.3 && Math.abs(p.position.x)<.95) {
+    p.velocity.z=Math.abs(p.velocity.z)*.48; p.position.z=-10.45;
+  }
+  // Ground collision
+  if(p.position.y<.24) {
+    finishShot(p.scored);
+    return;
+  }
+  // Rim-ish collision: repel if passing too close outside opening
+  const nearPlane=Math.abs(p.position.z-hoopZ)<.13;
+  const radial=Math.hypot(p.position.x,p.position.y-rimY);
+  if(nearPlane && radial>rimR-.13 && radial<rimR+.2) {
+    p.velocity.z=Math.abs(p.velocity.z)*.45;
+    p.velocity.y=Math.abs(p.velocity.y)*.45;
+    p.position.z=hoopZ+.16;
+  }
+  if(p.age>7) finishShot(p.scored);
+  else ui.flight.textContent=`비행 ${p.age.toFixed(2)} s`;
+}
+function updateCamera() {
+  if(projectile) {
+    // During flight the camera becomes the ball's viewpoint and follows its velocity.
+    camera.position.copy(projectile.position);
+    const look=projectile.position.clone().add(projectile.velocity.clone().normalize());
+    camera.lookAt(look); activeCamera=camera; ball.visible=false; aimArrow.visible=false;
+    return;
+  }
+  if(resultView) {
+    camera.position.copy(resultView.position);
+    camera.lookAt(resultView.position.clone().add(resultView.direction));
+    activeCamera=camera; ball.visible=false; aimArrow.visible=false;
+    return;
+  }
+  camera.position.set(player.x,player.y,player.z);
+  camera.rotation.order='YXZ'; camera.rotation.set(pitch,yaw,0);
+  // Put the waiting ball at the lower centre of the player's view.
+  const forward=directionFromAim();
+  ball.position.copy(camera.position).addScaledVector(forward,1.25).add(new THREE.Vector3(0,-.92,0));
+  ball.visible=started;
+  updateAimArrow();
+  if(viewMode==='2d') {
+    // Keep the basket and the useful part of the arc at screen centre, using
+    // a true side-on camera so vertical angle adjustments are easy to read.
+    const halfHeight=7, centerY=3, aspect=innerWidth/innerHeight;
+    orthoCamera.left=-halfHeight*aspect; orthoCamera.right=halfHeight*aspect;
+    orthoCamera.top=centerY+halfHeight; orthoCamera.bottom=centerY-halfHeight;
+    orthoCamera.position.set(24,centerY,-8); orthoCamera.lookAt(0,centerY,-8); orthoCamera.updateProjectionMatrix();
+    activeCamera=orthoCamera;
+  } else activeCamera=camera;
+}
+function lockMouseNow() {
+  if (started && renderer.domElement.requestPointerLock && document.pointerLockElement !== renderer.domElement) {
+    renderer.domElement.requestPointerLock();
+  }
+}
+function unlockMouseNow() {
+  if (document.pointerLockElement === renderer.domElement && document.exitPointerLock) {
+    document.exitPointerLock();
+  }
+}
+function startGame(lockMouse) {
+  started=true;ui.start.style.display='none';
+  if(lockMouse) lockMouseNow();
+  resetPlayer();
+}
+ui.startBtn.addEventListener('click',()=>startGame(true));
+ui.skipLock.addEventListener('click',()=>startGame(false));
+ui.shoot.addEventListener('click',shoot);
+ui.reset.addEventListener('click',()=>{resetPlayer(Boolean(lastShotOrigin));showToast(lastShotOrigin?'같은 발사 위치로 돌아왔습니다':'발사 위치로 돌아왔습니다');});
+ui.traj.addEventListener('click',()=>{showTrajectory=!showTrajectory;ui.traj.textContent=`궤적 표시: ${showTrajectory?'켬':'끔'}`;drawTrajectory();trajectoryLine.visible=(showTrajectory||viewMode==='2d')&&!projectile;});
+ui.view.addEventListener('click',()=>setViewMode(viewMode==='3d'?'2d':'3d'));
+ui.resultRetry.addEventListener('click',()=>{resetPlayer(true);showToast('같은 발사 위치로 돌아왔습니다');});
+ui.nextStage.addEventListener('click',()=>applyStage(stageIndex+1));
+document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===renderer.domElement;});
+document.addEventListener('mousemove',e=>{
+  if(!started) return;
+  if(viewMode==='2d') {
+    // In the side view right-drag means elevation only: no horizontal yaw.
+    if(e.buttons===2) pitch-=e.movementY*.003;
+  } else if(locked){yaw-=e.movementX*.0022;pitch-=e.movementY*.0022;}
+  else if(e.buttons===2){yaw-=e.movementX*.003;pitch-=e.movementY*.003;}
+  pitch=THREE.MathUtils.clamp(pitch,0,THREE.MathUtils.degToRad(75));
+  ui.angle.value=String(Math.round(THREE.MathUtils.radToDeg(pitch)));
+  // Keep mouse aim and slider values synchronized without introducing a second aim direction.
+  pitch=THREE.MathUtils.degToRad(Number(ui.angle.value));
+  refreshAimUI();
+});
+renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('keydown',e=>{
+  if (e.code === 'AltLeft' || e.code === 'AltRight') {
+    e.preventDefault();
+    if (!e.repeat && started) {
+      if (document.pointerLockElement === renderer.domElement) {
+        unlockMouseNow();
+        showToast('마우스 고정 해제');
+      } else {
+        lockMouseNow();
+        showToast('마우스 고정');
+      }
+    }
+    return;
+  }
+  keys[e.code]=true;
+  if(['Space','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+  if(e.code==='Space' && !e.repeat && !e.target.matches('input,button')) shoot();
+  if(e.code==='KeyR' && started && !e.target.matches('input,button')) {resetPlayer();showToast('재시도 준비 완료');}
+});
+document.addEventListener('keyup',e=>keys[e.code]=false);
+function updatePlayer(dt) {
+  if(!started || projectile || viewMode==='2d' || resultView) return;
+  const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+  const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
+  const move=new THREE.Vector3();
+  if(keys.KeyW) move.add(forward);
+  if(keys.KeyS) move.sub(forward);
+  if(keys.KeyD) move.add(right);
+  if(keys.KeyA) move.sub(right);
+  if(move.lengthSq()>0) {
+    move.normalize().multiplyScalar(moveSpeed*dt);
+    player.x=THREE.MathUtils.clamp(player.x+move.x,-14.5,14.5);
+    player.z=THREE.MathUtils.clamp(player.z+move.z,-26,12.5);
+    drawTrajectory();
+  }
+}
+let last=performance.now();
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt=Math.min((now-last)/1000,.033);last=now;
+  updatePlayer(dt);
+  updateProjectile(dt);
+  updateCamera();
+  renderer.render(scene,activeCamera);
+}
+requestAnimationFrame(animate);
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);
+  orthoCamera.updateProjectionMatrix();
+});
+updateAimUI();
+</script>
+</body>
+</html>
